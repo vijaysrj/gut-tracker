@@ -7,12 +7,14 @@ export default async function proxy(req: NextRequest) {
   if (req.nextUrl.pathname.startsWith("/api/")) {
     return NextResponse.json({ error: "unauthorized" }, { status: 401 });
   }
-  return NextResponse.redirect(new URL("/login", req.url));
+  // Signed-out visitors to the home page see the landing page; anything deeper goes to login.
+  const target = req.nextUrl.pathname === "/" ? "/welcome" : "/login";
+  return NextResponse.redirect(new URL(target, req.url));
 }
 
 export const config = {
-  // Everything except the login page, Next internals, and PWA assets.
+  // Everything except the landing and login pages, Next internals, and PWA assets.
   matcher: [
-    "/((?!login|_next/static|_next/image|favicon.ico|icon|apple-icon|manifest.webmanifest).*)",
+    "/((?!welcome|login|_next/static|_next/image|favicon.ico|icon|apple-icon|manifest.webmanifest).*)",
   ],
 };

@@ -27,6 +27,11 @@ export default function LoginPage() {
         >
           {pending ? "Checking…" : "Unlock"}
         </button>
+        <p className="text-center text-sm">
+          <a href="/welcome" className="text-muted underline-offset-4 hover:underline">
+            What is Gut Tracker?
+          </a>
+        </p>
       </form>
     </main>
   );
