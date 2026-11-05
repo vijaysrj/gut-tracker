@@ -56,6 +56,8 @@ export function ensureSchema() {
       )`;
       await db`CREATE INDEX IF NOT EXISTS meals_eaten_at_idx ON meals (eaten_at)`;
       await db`CREATE INDEX IF NOT EXISTS symptoms_occurred_at_idx ON symptoms (occurred_at)`;
+      // Cards shown under an assistant reply (meals/symptoms it logged).
+      await db`ALTER TABLE messages ADD COLUMN IF NOT EXISTS meta JSONB`;
     })().catch((e) => {
       schemaReady = null;
       throw e;
@@ -69,5 +71,25 @@ export type Message = {
   role: "user" | "assistant";
   content: string;
   image_url: string | null;
+  meta: MessageMeta | null;
   created_at: string;
 };
+
+export type MealCard = {
+  id: number;
+  description: string;
+  location_type: string;
+  place: string | null;
+  amount_spent: number | null;
+  currency: string | null;
+  calories: number | null;
+  protein_g: number | null;
+  carbs_g: number | null;
+  fat_g: number | null;
+  fiber_g: number | null;
+  deleted?: boolean;
+};
+
+export type SymptomCard = { id: number; kind: string; severity: number | null };
+
+export type MessageMeta = { meals?: MealCard[]; symptoms?: SymptomCard[] };
