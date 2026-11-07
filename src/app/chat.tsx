@@ -152,7 +152,7 @@ export default function Chat() {
       <header className="flex items-center justify-between border-b border-black/5 bg-surface/80 px-4 pb-3 pt-[max(env(safe-area-inset-top),0.75rem)] backdrop-blur dark:border-white/10">
         <h1 className="text-lg font-semibold">🥗 Gut Tracker</h1>
         <form action="/api/logout" method="post">
-          <button className="text-sm text-muted">Lock</button>
+          <button className="text-sm text-muted">Sign out</button>
         </form>
       </header>
 

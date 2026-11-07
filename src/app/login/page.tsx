@@ -13,6 +13,15 @@ export default function LoginPage() {
           <h1 className="mt-2 text-xl font-semibold">Gut Tracker</h1>
         </div>
         <input
+          name="email"
+          type="email"
+          autoComplete="username"
+          autoCapitalize="none"
+          placeholder="Email"
+          required
+          className="w-full rounded-xl border border-black/10 bg-surface px-4 py-3 text-base dark:border-white/15"
+        />
+        <input
           name="password"
           type="password"
           autoComplete="current-password"
@@ -25,7 +34,7 @@ export default function LoginPage() {
           disabled={pending}
           className="w-full rounded-xl bg-accent px-4 py-3 font-medium text-white disabled:opacity-60"
         >
-          {pending ? "Checking…" : "Unlock"}
+          {pending ? "Checking…" : "Sign in"}
         </button>
         <p className="text-center text-sm">
           <a href="/welcome" className="text-muted underline-offset-4 hover:underline">
