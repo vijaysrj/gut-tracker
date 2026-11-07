@@ -1,8 +1,8 @@
 import { NextResponse, type NextRequest } from "next/server";
-import { SESSION_COOKIE, isValidSession } from "@/lib/auth";
+import { SESSION_COOKIE, sessionUser } from "@/lib/auth";
 
 export default async function proxy(req: NextRequest) {
-  const ok = await isValidSession(req.cookies.get(SESSION_COOKIE)?.value);
+  const ok = !!(await sessionUser(req.cookies.get(SESSION_COOKIE)?.value));
   if (ok) return NextResponse.next();
   if (req.nextUrl.pathname.startsWith("/api/")) {
     return NextResponse.json({ error: "unauthorized" }, { status: 401 });

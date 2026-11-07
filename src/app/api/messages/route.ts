@@ -1,17 +1,29 @@
 import { NextResponse } from "next/server";
 import Anthropic from "@anthropic-ai/sdk";
 import { ensureSchema, sql, type MealCard, type Message, type MessageMeta, type SymptomCard } from "@/lib/db";
+import { requireUser } from "@/lib/session";
 import { interpret, sumItems, type ChatResult, type RecentMeal } from "@/lib/ai";
 
 export const maxDuration = 120;
 
 const MSG_COLS = "id, role, content, image_url, meta, created_at";
 
+async function currentUser() {
+  try {
+    return await requireUser();
+  } catch {
+    return null;
+  }
+}
+
 export async function GET() {
+  const me = await currentUser();
+  if (!me) return NextResponse.json({ error: "unauthorized" }, { status: 401 });
   await ensureSchema();
   const rows = (await sql()`
     SELECT * FROM (
       SELECT id, role, content, image_url, meta, created_at FROM messages
+      WHERE user_email = ${me}
       ORDER BY created_at DESC, id DESC LIMIT 200
     ) t ORDER BY created_at ASC, id ASC
   `) as Message[];
@@ -34,6 +46,8 @@ function ts(v: string | null) {
 }
 
 export async function POST(req: Request) {
+  const me = await currentUser();
+  if (!me) return NextResponse.json({ error: "unauthorized" }, { status: 401 });
   await ensureSchema();
   const body = await req.json().catch(() => ({}));
   const text = typeof body.content === "string" ? body.content.trim().slice(0, 4000) : "";
@@ -48,13 +62,13 @@ export async function POST(req: Request) {
   const db = sql();
 
   const [user] = (await db.query(
-    `INSERT INTO messages (role, content, image_url) VALUES ('user', $1, $2) RETURNING ${MSG_COLS}`,
-    [text, thumb],
+    `INSERT INTO messages (user_email, role, content, image_url) VALUES ($1, 'user', $2, $3) RETURNING ${MSG_COLS}`,
+    [me, text, thumb],
   )) as Message[];
 
   const history = (
     (await db`
-      SELECT role, content, image_url FROM messages WHERE id < ${user.id}
+      SELECT role, content, image_url FROM messages WHERE user_email = ${me} AND id < ${user.id}
       ORDER BY id DESC LIMIT 16
     `) as { role: "user" | "assistant"; content: string; image_url: string | null }[]
   )
@@ -64,7 +78,7 @@ export async function POST(req: Request) {
 
   const recentMeals = (await db`
     SELECT id, eaten_at, description, location_type, place, amount_spent, calories
-    FROM meals WHERE eaten_at > now() - interval '24 hours' ORDER BY eaten_at
+    FROM meals WHERE user_email = ${me} AND eaten_at > now() - interval '24 hours' ORDER BY eaten_at
   `) as RecentMeal[];
 
   let result: ChatResult;
@@ -79,8 +93,8 @@ export async function POST(req: Request) {
           ? "I'm being rate-limited. Try again in a minute."
           : "Something went wrong reading that. Please try again.";
     const [assistant] = (await db.query(
-      `INSERT INTO messages (role, content) VALUES ('assistant', $1) RETURNING ${MSG_COLS}`,
-      [msg],
+      `INSERT INTO messages (user_email, role, content) VALUES ($1, 'assistant', $2) RETURNING ${MSG_COLS}`,
+      [me, msg],
     )) as Message[];
     return NextResponse.json({ messages: [user, assistant] });
   }
@@ -91,9 +105,9 @@ export async function POST(req: Request) {
   for (const m of result.new_meals) {
     const t = sumItems(m.items);
     const [row] = (await db`
-      INSERT INTO meals (eaten_at, description, location_type, place, amount_spent, currency, photo_url,
+      INSERT INTO meals (user_email, eaten_at, description, location_type, place, amount_spent, currency, photo_url,
         items, calories, protein_g, carbs_g, fat_g, fiber_g, sugar_g, micros, message_id)
-      VALUES (COALESCE(${ts(m.eaten_at)}::timestamptz, now()), ${m.description},
+      VALUES (${me}, COALESCE(${ts(m.eaten_at)}::timestamptz, now()), ${m.description},
         ${m.location_type === "outside" ? "outside" : "home"}, ${m.place}, ${m.amount_spent},
         ${m.amount_spent != null ? (m.currency ?? "INR") : m.currency}, ${thumb},
         ${JSON.stringify(m.items)}::jsonb, ${t.calories}, ${t.protein_g}, ${t.carbs_g}, ${t.fat_g}, ${t.fiber_g},
@@ -114,7 +128,7 @@ export async function POST(req: Request) {
   for (const u of result.meal_updates) {
     if (!validIds.has(u.meal_id)) continue;
     if (u.delete) {
-      await db`DELETE FROM meals WHERE id = ${u.meal_id}`;
+      await db`DELETE FROM meals WHERE id = ${u.meal_id} AND user_email = ${me}`;
       const old = recentMeals.find((r) => r.id === u.meal_id)!;
       meta.meals!.push({
         id: u.meal_id, description: old.description, location_type: old.location_type, place: null,
@@ -140,7 +154,7 @@ export async function POST(req: Request) {
         carbs_g = CASE WHEN ${!!t}::boolean THEN ${t?.carbs_g ?? null}::numeric ELSE carbs_g END,
         fat_g = CASE WHEN ${!!t}::boolean THEN ${t?.fat_g ?? null}::numeric ELSE fat_g END,
         fiber_g = CASE WHEN ${!!t}::boolean THEN ${t?.fiber_g ?? null}::numeric ELSE fiber_g END
-      WHERE id = ${u.meal_id}
+      WHERE id = ${u.meal_id} AND user_email = ${me}
       RETURNING id, description, location_type, place, amount_spent, currency, calories, protein_g, carbs_g, fat_g, fiber_g
     `) as Record<string, unknown>[];
     if (row) meta.meals!.push(toCard(row));
@@ -149,8 +163,8 @@ export async function POST(req: Request) {
   for (const s of result.new_symptoms) {
     const sev = s.severity == null ? null : Math.min(5, Math.max(1, s.severity));
     const [row] = (await db`
-      INSERT INTO symptoms (occurred_at, kind, severity, notes, message_id)
-      VALUES (COALESCE(${ts(s.occurred_at)}::timestamptz, now()), ${s.kind.toLowerCase()}, ${sev}, ${s.notes}, ${user.id})
+      INSERT INTO symptoms (user_email, occurred_at, kind, severity, notes, message_id)
+      VALUES (${me}, COALESCE(${ts(s.occurred_at)}::timestamptz, now()), ${s.kind.toLowerCase()}, ${sev}, ${s.notes}, ${user.id})
       RETURNING id
     `) as { id: number }[];
     meta.symptoms!.push({ id: row.id, kind: s.kind.toLowerCase(), severity: sev } satisfies SymptomCard);
@@ -158,8 +172,8 @@ export async function POST(req: Request) {
 
   const hasMeta = meta.meals!.length || meta.symptoms!.length;
   const [assistant] = (await db.query(
-    `INSERT INTO messages (role, content, meta) VALUES ('assistant', $1, $2) RETURNING ${MSG_COLS}`,
-    [result.reply, hasMeta ? JSON.stringify(meta) : null],
+    `INSERT INTO messages (user_email, role, content, meta) VALUES ($1, 'assistant', $2, $3) RETURNING ${MSG_COLS}`,
+    [me, result.reply, hasMeta ? JSON.stringify(meta) : null],
   )) as Message[];
 
   return NextResponse.json({ messages: [user, assistant] });

@@ -1,4 +1,5 @@
 import { neon } from "@neondatabase/serverless";
+import { ownerEmail } from "./auth";
 
 let _sql: ReturnType<typeof neon> | null = null;
 
@@ -58,6 +59,16 @@ export function ensureSchema() {
       await db`CREATE INDEX IF NOT EXISTS symptoms_occurred_at_idx ON symptoms (occurred_at)`;
       // Cards shown under an assistant reply (meals/symptoms it logged).
       await db`ALTER TABLE messages ADD COLUMN IF NOT EXISTS meta JSONB`;
+      // Per-user data: every row belongs to one signed-in email.
+      // Rows from before multi-user sign-in belong to the owner.
+      for (const table of ["messages", "meals", "symptoms"]) {
+        await db.query(`ALTER TABLE ${table} ADD COLUMN IF NOT EXISTS user_email TEXT`);
+        await db.query(`UPDATE ${table} SET user_email = $1 WHERE user_email IS NULL`, [ownerEmail()]);
+        await db.query(`ALTER TABLE ${table} ALTER COLUMN user_email SET NOT NULL`);
+      }
+      await db`CREATE INDEX IF NOT EXISTS messages_user_idx ON messages (user_email, created_at)`;
+      await db`CREATE INDEX IF NOT EXISTS meals_user_eaten_at_idx ON meals (user_email, eaten_at)`;
+      await db`CREATE INDEX IF NOT EXISTS symptoms_user_occurred_at_idx ON symptoms (user_email, occurred_at)`;
     })().catch((e) => {
       schemaReady = null;
       throw e;
